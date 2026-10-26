@@ -1,0 +1,22 @@
+import { AlertTriangle, Bot, LoaderCircle, ScanSearch, Sparkles } from 'lucide-react';
+import { evaluator } from '../../services/ai/mockEvaluator';
+import { imageCorrector } from '../../services/ai/mockCorrector';
+import type { EvaluationIssue } from '../../services/ai/types';
+import { getActiveFrame, useEditorStore } from '../../stores/editorStore';
+import { captureCanvas } from '../../utils/canvas';
+import { CorrectionPreview } from './CorrectionPreview';
+import { IssueCard } from './IssueCard';
+export function AIPanel() {
+  const store = useEditorStore(), frame = getActiveFrame(store);
+  const selectedIssue = store.evaluationResult?.issues.find((i) => i.id === store.selectedIssueId) ?? null;
+  const evaluate = async () => { const request = { frameId: frame.id, frameRevision: frame.revision, sceneDescription: store.sceneDescription, constraints: store.constraints, imageDataUrl: captureCanvas(), sceneState: { ...frame.scene } }; store.startEvaluation(); try { store.finishEvaluation(await evaluator.evaluate(request)); } catch (e) { store.failEvaluation(e instanceof Error ? e.message : '评估失败，请重试。'); } };
+  const correct = async (issue: EvaluationIssue = selectedIssue!) => { if (!issue) return; const before = useEditorStore.getState(); const region = before.selectedIssueId === issue.id ? before.selectedRegion ?? issue.region : issue.region; if (before.selectedIssueId !== issue.id) store.selectIssue(issue); const current = getActiveFrame(useEditorStore.getState()); const request = { frameId: current.id, frameRevision: current.revision, issueId: issue.id, imageDataUrl: captureCanvas(), region, prompt: issue.editPrompt, constraints: store.constraints, sceneState: { ...current.scene } }; store.startCorrection(); try { store.finishCorrection(await imageCorrector.correct(request)); } catch (e) { store.failCorrection(e instanceof Error ? e.message : '修正生成失败，请重试。'); } };
+  return <><aside className="assistant panel"><div className="assistant-title"><div className="ai-orb"><Bot size={20}/></div><div><span className="eyebrow">Mock AI</span><h2>协作助手</h2></div><span className="online-dot">就绪</span></div><label className="field"><span>场景目标</span><textarea value={store.sceneDescription} onChange={(e) => store.setSceneDescription(e.target.value)} rows={4}/></label><div className="constraint-box"><span>角色约束</span>{store.constraints.map((item) => <p key={item}>• {item}</p>)}</div>
+    {store.evaluationStatus === 'loading' && <div className="loading-state"><LoaderCircle className="spin"/><strong>正在分析当前画面</strong><p>检查姿态、风格与关键帧一致性…</p></div>}
+    {store.evaluationStatus === 'idle' && !store.evaluationError && <div className="empty-state"><ScanSearch size={22}/><strong>等待画面评估</strong><p>AI 只会提出建议，不会自动修改你的作品。</p></div>}
+    {store.evaluationError && <div className="error-box"><AlertTriangle size={16}/><span>{store.evaluationError}</span></div>}
+    {store.evaluationResult && <div className="result-block"><div className="result-summary"><Sparkles size={15}/><span>{store.evaluationResult.summary}</span></div>{store.evaluationResult.issues.length === 0 ? <div className="success-empty"><strong>画面状态良好</strong><p>当前演示场景未发现待修正问题。</p></div> : store.evaluationResult.issues.map((issue) => <IssueCard key={issue.id} issue={issue} active={issue.id === store.selectedIssueId} onLocate={() => store.selectIssue(issue)} onCorrect={() => correct(issue)} onIgnore={() => store.ignoreIssue(issue.id)}/>)}</div>}
+    {store.correctionStatus === 'loading' && <div className="correction-progress"><LoaderCircle className="spin" size={17}/><span>正在生成局部修正候选…</span></div>}{store.correctionError && <div className="error-box"><AlertTriangle size={16}/><span>{store.correctionError}</span>{selectedIssue && <button onClick={() => correct(selectedIssue)}>重试</button>}</div>}
+    <button className="ai-button" disabled={store.evaluationStatus === 'loading' || store.correctionStatus === 'loading'} onClick={evaluate}>{store.evaluationStatus === 'loading' ? <LoaderCircle className="spin" size={16}/> : <Sparkles size={16}/>}AI 评估当前画面</button></aside>
+    {store.correctionStatus === 'preview' && store.correctionCandidate && selectedIssue && <CorrectionPreview before={frame.scene} after={store.correctionCandidate.correctionData} strokes={frame.strokes} title={selectedIssue.title} prompt={selectedIssue.editPrompt} onAccept={store.acceptCorrection} onReject={store.clearCorrection} onRetry={() => correct(selectedIssue)}/>}</>;
+}
